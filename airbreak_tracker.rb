@@ -3,23 +3,23 @@ require 'net/http'
 require 'uri'
 require "rexml/document"
 require 'yaml'
-class HopTracker
-  HOPTOAD_URL = 'http://usmov.hoptoadapp.com/'
-
-  PIVOTAL_URL = 'http://www.pivotaltracker.com/services/v2'
+require 'open-uri'
+require 'cgi'
+class AirbreakTracker
+  PIVOTAL_URL = 'http://www.pivotaltracker.com/services/v3'
   attr_accessor :errors
   
   def initialize(&args)
     config = YAML.load_file("config.yml")
-  	hoptoad_auth_token = config["config"]["HOPTOAD_AUTH_TOKEN"]
-  	pivotal_project_id = config["config"]["PIVOTAL_PROJECT_ID"]
-  	pivotal_api_token = config["config"]["PIVOTAL_API_TOKEN"]
-  	@css_file = config["config"]["css_file"]
-  	
-    @hop_url = HOPTOAD_URL+'errors.xml?auth_token='+ hoptoad_auth_token
-    @pivotal_url = "#{PIVOTAL_URL}/projects/#{pivotal_project_id}/stories"
+    @airbreak_project_url = config["config"]["AIRBREAK_PROJECT_URL"]
+    @requester = config["config"]["REQUESTER"]
+    @airbreak_user_name = config["config"]["AIRBREAK_USERNAME"]
+    @airbreak_password = config["config"]["AIRBREAK_PASSWORD"]
+  	# @css_file = config["config"]["css_file"]
+    @airbreak_error_uri = "/errors.xml?auth_token=#{config["config"]["AIRBREAK_AUTH_TOKEN"]}"
+    @pivotal_url = "#{PIVOTAL_URL}/projects/#{config["config"]["PIVOTAL_PROJECT_ID"]}/stories"
     @pivotal_headers = {
-            "X-TrackerToken" => pivotal_api_token,
+            "X-TrackerToken" => config["config"]["PIVOTAL_API_TOKEN"],
             "Accept"         => "application/xml",
             "Content-type"   => "application/xml"
           }
@@ -28,15 +28,16 @@ class HopTracker
   
   def errors
     @errors = []
-    res = Net::HTTP.get_response(URI.parse(@hop_url)).body
+    #914b74a111fa3ddd7e5f02ef0a499e38
+    res = open("http://"+@airbreak_project_url+@airbreak_error_uri)
+
     result = REXML::Document.new(res)
     result.root.elements.each do |x|
       error_id = x.elements['id'].text
       unless check_existing?(error_id)
-        error_title = %&[#{x.elements['rails-env'].text}]Hoptoad Error id-#{error_id}: #{x.elements['error-message'].text[0..50]}&
-        error_description = %&In #{x.elements['controller'].text}/ #{x.elements['action'].text}. /n check the details at #{HOPTOAD_URL}/errors/#{error_id}&
-    
-        story = %&<story><story_type>bug</story_type><name>#{error_title}</name><requested_by>Ritu Kamthan</requested_by><description>#{error_description}</description></story>&
+        error_title = CGI.escapeHTML "[#{x.elements['rails-env'].text}]Airbreak Error id-#{error_id}}"
+        error_description = CGI.escapeHTML "In #{x.elements['controller'].text}/ #{x.elements['action'].text}. /n #{x.elements['error-message'].text} /n check the details at #{@airbreak_project_url}/errors/#{error_id}"
+        story = "<story><story_type>bug</story_type><name>#{error_title}</name><requested_by>#{@requester}</requested_by><description>#{error_description}</description></story>"
         @errors << {:id => error_id, :story => story}
       end
     end
@@ -66,7 +67,7 @@ class HopTracker
   end
   
   def self.recent_errors
-    h = HopTracker.new
+    h = AirbreakTracker.new
     e = h.errors
     h.post_errors(e)
   end
@@ -74,7 +75,7 @@ class HopTracker
   private
   
   def check_existing?(e_id)
-    errors = YAML.load_file("errors.yml")
+    errors = YAML.load_file("errors.yml") rescue nil
     return unless errors
     errors[e_id]
   end
@@ -89,4 +90,4 @@ end
 
 # run
 
-HopTracker.recent_errors
+AirbreakTracker.recent_errors
